@@ -1,0 +1,113 @@
+import cv2
+import numpy as np
+import os
+
+# --- Ekstraksi fitur dari gambar ---
+def extract_features(image_path):
+    image = cv2.imread(image_path)
+    if image is None:
+        print(f"❌ Gagal membaca gambar: {image_path}")
+        return None, None
+
+    image = cv2.resize(image, (200, 200))
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    hist = cv2.calcHist([hsv], [0, 1], None, [50, 60], [0, 180, 0, 256])
+    hist = cv2.normalize(hist, hist).flatten()
+
+    orb = cv2.ORB_create()
+    _, descriptors = orb.detectAndCompute(image, None)
+    if descriptors is None:
+        descriptors = np.array([], dtype=np.float32).reshape(0, 32)
+
+    return hist, descriptors
+
+# --- Bandingkan fitur: kombinasi histogram dan ORB ---
+def compare_features(hist1, orb1, hist2, orb2):
+    hist_dist = np.linalg.norm(hist1 - hist2)
+    orb_dist = 10.0
+
+    if orb1.shape[0] > 0 and orb2.shape[0] > 0:
+        index_params = dict(algorithm=6, table_number=6, key_size=12, multi_probe_level=1)
+        search_params = dict(checks=50)
+        flann = cv2.FlannBasedMatcher(index_params, search_params)
+
+        try:
+            matches = flann.knnMatch(orb1, orb2, k=2)
+            good = [m for m, n in matches if m.distance < 0.75 * n.distance]
+            orb_dist = 1.0 / (len(good) + 1.0)
+        except:
+            orb_dist = 5.0
+
+    return 0.4 * hist_dist + 0.6 * orb_dist
+
+# --- Cari gambar paling mirip dari folder dataset ---
+def find_best_match(query_path, dataset_folder):
+    query_hist, query_orb = extract_features(query_path)
+    if query_hist is None:
+        return None, None
+
+    best_distance = float("inf")
+    best_image_path = None
+
+    for fname in os.listdir(dataset_folder):
+        if not fname.lower().endswith(('.jpg', '.jpeg', '.png')):
+            continue
+        db_path = os.path.join(dataset_folder, fname)
+
+        # ⚠️ Hanya gambar di dataset yang boleh dibandingkan
+        db_hist, db_orb = extract_features(db_path)
+        if db_hist is None:
+            continue
+
+        distance = compare_features(query_hist, query_orb, db_hist, db_orb)
+
+        if distance < best_distance:
+            best_distance = distance
+            best_image_path = db_path
+
+    return best_image_path, best_distance
+
+# --- Tampilkan hasil pencarian ---
+def show_result(query_path, match_path, distance):
+    img_query = cv2.imread(query_path)
+    img_result = cv2.imread(match_path)
+
+    if img_query is None or img_result is None:
+        print("❌ Tidak bisa menampilkan gambar.")
+        return
+
+    img_query = cv2.resize(img_query, (250, 250))
+    img_result = cv2.resize(img_result, (250, 250))
+
+    cv2.putText(img_query, "GAMBAR QUERY", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
+    cv2.putText(img_result, "GAMBAR DARI DATASET", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
+    cv2.putText(img_result, f"Jarak: {distance:.2f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
+
+    gabung = np.hstack([img_query, img_result])
+    cv2.imshow("QUERY vs HASIL", gabung)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+# --- Program utama ---
+def main():
+    dataset_folder = r"C:\uas\deteksi\Tekstur"
+    query_path = input("📷 Masukkan path gambar query: ").strip()
+
+    if not os.path.exists(query_path):
+        print("❌ File query tidak ditemukan.")
+        return
+    if not os.path.isdir(dataset_folder):
+        print("❌ Folder dataset tidak ditemukan.")
+        return
+
+    print("🔍 Mencari gambar mirip dari dataset...")
+    hasil_path, jarak = find_best_match(query_path, dataset_folder)
+
+    if hasil_path:
+        print(f"\n✅ Gambar paling mirip: {os.path.basename(hasil_path)} (jarak: {jarak:.4f})")
+        show_result(query_path, hasil_path, jarak)
+    else:
+        print("🚫 Tidak ditemukan gambar mirip dalam dataset.")
+
+if __name__ == "__main__":
+    main()
